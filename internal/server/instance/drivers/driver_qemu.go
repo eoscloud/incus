@@ -9455,6 +9455,11 @@ func (d *qemu) renderState(statusCode api.StatusCode) (*api.InstanceState, error
 		StatusCode: statusCode,
 	}
 
+	// If VM is in error state, we're done here.
+	if d.isErrorStatusCode(statusCode) {
+		return nil, errors.New("Instance is in error state")
+	}
+
 	// If VM is stopped, we're done here.
 	if !d.isRunningStatusCode(statusCode) {
 		return status, nil
