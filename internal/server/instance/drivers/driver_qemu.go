@@ -10745,6 +10745,21 @@ func (d *qemu) RenderState(hostInterfaces []net.Interface) (*api.InstanceState, 
 func (d *qemu) diskState() map[string]api.InstanceStateDisk {
 	disk := map[string]api.InstanceStateDisk{}
 
+	// Get the disk I/O counters from QEMU, best effort. diskState is also called for
+	// stopped and errored instances, in which case connecting to QMP is expected to fail,
+	// so that's not logged as an error and the counters are simply left unset.
+	var blockStats map[string]qmp.BlockStats
+
+	monitor, err := d.qmpConnect()
+	if err != nil {
+		d.logger.Debug("Failed to connect to QMP monitor to get disk I/O counters", logger.Ctx{"err": err})
+	} else {
+		blockStats, err = monitor.GetBlockStats()
+		if err != nil {
+			d.logger.Debug("Failed to get disk I/O counters", logger.Ctx{"err": err})
+		}
+	}
+
 	for _, dev := range d.expandedDevices.Sorted() {
 		if dev.Config["type"] != "disk" {
 			continue
@@ -10791,6 +10806,20 @@ func (d *qemu) diskState() map[string]api.InstanceStateDisk {
 		if usage != nil {
 			diskState.Usage = usage.Used
 			diskState.Total = usage.Total
+		}
+
+		if blockStats != nil {
+			qdevID := qemuDeviceIDPrefix + linux.PathNameEncode(dev.Name)
+
+			stats, ok := blockStats[qdevID]
+			if ok {
+				diskState.Counters = &api.InstanceStateDiskCounters{
+					BytesRead:       int64(stats.BytesRead),
+					BytesWritten:    int64(stats.BytesWritten),
+					ReadsCompleted:  int64(stats.ReadsCompleted),
+					WritesCompleted: int64(stats.WritesCompleted),
+				}
+			}
 		}
 
 		disk[dev.Name] = diskState
