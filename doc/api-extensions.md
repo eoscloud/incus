@@ -3491,3 +3491,15 @@ Adds a new `security.tags` configuration key to instances, holding a
 comma-separated list of tags. The tags are exposed to the authorization
 backend, with OpenFGA maintaining a `security_tag` object for each tag
 along with a `tag` relation to every instance carrying it.
+
+## `instance_state_disk_counters`
+
+Adds a `counters` field to each entry of the `disk` section of an instance's
+state, holding `bytes_read`, `bytes_written`, `reads_completed` and
+`writes_completed`.
+
+These are only populated for virtual machines, using the block I/O
+statistics reported by QEMU. Containers do not report them because cgroup
+I/O accounting is keyed by host block device rather than by Incus device
+name, and a container's root filesystem and custom volumes routinely share
+a single host block device, making per-device attribution impossible.
