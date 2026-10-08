@@ -3564,3 +3564,13 @@ This adds support for OIDC providers that issue opaque (non-JWT) access tokens.
 
 When the access token isn't a JWT, Incus verifies the ID token instead, checking that it was issued by the configured issuer for the configured client ID.
 Clients send the ID token alongside the opaque access token through the `X-Incus-OIDC-idtoken` header.
+
+## `network_bgp_bfd`
+
+Adds support for Bidirectional Forwarding Detection (BFD) on BGP peers of `bridge` and `physical` networks.
+
+This introduces the following configuration keys:
+
+* `bgp.peers.NAME.bfd` to enable BFD on the peer session
+* `bgp.peers.NAME.bfd.interval` to set the BFD transmit and receive interval (in milliseconds)
+* `bgp.peers.NAME.bfd.multiplier` to set the BFD detection multiplier
