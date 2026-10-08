@@ -482,6 +482,85 @@ func (s *Server) removePrefixByUUID(pathUUID string) error {
 	return nil
 }
 
+// peerConfig builds the GoBGP configuration for a peer.
+func peerConfig(p peer) (*bgpAPI.Peer, error) {
+	// Setup the peer configuration (unnumbered peers use the interface name).
+	conf := &bgpAPI.PeerConf{
+		PeerAsn:      p.asn,
+		AuthPassword: p.password,
+	}
+
+	if p.address != nil {
+		conf.NeighborAddress = p.address.String()
+	} else {
+		conf.NeighborInterface = p.iface
+	}
+
+	// Setup the configuration.
+	n := &bgpAPI.Peer{
+		// Peer information.
+		Conf: conf,
+
+		// Allow for 120s offline before route removal.
+		GracefulRestart: &bgpAPI.GracefulRestart{
+			Enabled:     true,
+			RestartTime: 3600,
+		},
+
+		// Always allow for the maximum multihop.
+		EbgpMultihop: &bgpAPI.EbgpMultihop{
+			Enabled:     true,
+			MultihopTtl: 255,
+		},
+	}
+
+	// Add hold time if configured.
+	if p.holdtime > 0 {
+		n.Timers = &bgpAPI.Timers{
+			Config: &bgpAPI.TimersConfig{
+				HoldTime: p.holdtime,
+			},
+		}
+	}
+
+	// Setup peer for dual-stack.
+	n.AfiSafis = make([]*bgpAPI.AfiSafi, 0)
+	for _, f := range []string{"ipv4-unicast", "ipv6-unicast"} {
+		rf, err := bgpPacket.GetFamily(f)
+		if err != nil {
+			return nil, err
+		}
+
+		afi := rf.Afi()
+		safi := rf.Safi()
+		family := &bgpAPI.Family{
+			Afi:  bgpAPI.Family_Afi(afi),
+			Safi: bgpAPI.Family_Safi(safi),
+		}
+
+		n.AfiSafis = append(n.AfiSafis, &bgpAPI.AfiSafi{
+			MpGracefulRestart: &bgpAPI.MpGracefulRestart{
+				Config: &bgpAPI.MpGracefulRestartConfig{
+					Enabled: true,
+				},
+			},
+			Config: &bgpAPI.AfiSafiConfig{Family: family},
+		})
+	}
+
+	// The API path doesn't resolve unnumbered peers, do it ourselves.
+	if p.address == nil {
+		neighborAddress, err := bgpConfig.GetIPv6LinkLocalNeighborAddress(p.iface)
+		if err != nil {
+			return nil, err
+		}
+
+		n.State = &bgpAPI.PeerState{NeighborAddress: neighborAddress}
+	}
+
+	return n, nil
+}
+
 // AddPeer adds a new BGP peer.
 func (s *Server) AddPeer(address net.IP, iface string, asn uint32, password string, holdTime uint64) error {
 	// Locking.
@@ -511,102 +590,30 @@ func (s *Server) addPeer(address net.IP, iface string, asn uint32, password stri
 		return nil
 	}
 
-	// Setup the peer configuration (unnumbered peers use the interface name).
-	conf := &bgpAPI.PeerConf{
-		PeerAsn:      asn,
-		AuthPassword: password,
-	}
-
-	if address != nil {
-		conf.NeighborAddress = address.String()
-	} else {
-		conf.NeighborInterface = iface
-	}
-
-	// Setup the configuration.
-	n := &bgpAPI.Peer{
-		// Peer information.
-		Conf: conf,
-
-		// Allow for 120s offline before route removal.
-		GracefulRestart: &bgpAPI.GracefulRestart{
-			Enabled:     true,
-			RestartTime: 3600,
-		},
-
-		// Always allow for the maximum multihop.
-		EbgpMultihop: &bgpAPI.EbgpMultihop{
-			Enabled:     true,
-			MultihopTtl: 255,
-		},
-	}
-
-	// Add hold time if configured.
-	if holdTime > 0 {
-		n.Timers = &bgpAPI.Timers{
-			Config: &bgpAPI.TimersConfig{
-				HoldTime: holdTime,
-			},
-		}
-	}
-
-	// Setup peer for dual-stack.
-	n.AfiSafis = make([]*bgpAPI.AfiSafi, 0)
-	for _, f := range []string{"ipv4-unicast", "ipv6-unicast"} {
-		rf, err := bgpPacket.GetFamily(f)
-		if err != nil {
-			return err
-		}
-
-		afi := rf.Afi()
-		safi := rf.Safi()
-		family := &bgpAPI.Family{
-			Afi:  bgpAPI.Family_Afi(afi),
-			Safi: bgpAPI.Family_Safi(safi),
-		}
-
-		n.AfiSafis = append(n.AfiSafis, &bgpAPI.AfiSafi{
-			MpGracefulRestart: &bgpAPI.MpGracefulRestart{
-				Config: &bgpAPI.MpGracefulRestartConfig{
-					Enabled: true,
-				},
-			},
-			Config: &bgpAPI.AfiSafiConfig{Family: family},
-		})
+	newPeer := peer{
+		address:  address,
+		iface:    iface,
+		asn:      asn,
+		password: password,
+		holdtime: holdTime,
+		count:    1,
 	}
 
 	// Add the peer.
 	if s.bgp != nil {
-		// The API path doesn't resolve unnumbered peers, do it ourselves.
-		if address == nil {
-			neighborAddress, err := bgpConfig.GetIPv6LinkLocalNeighborAddress(iface)
-			if err != nil {
-				return err
-			}
-
-			n.State = &bgpAPI.PeerState{NeighborAddress: neighborAddress}
+		n, err := peerConfig(newPeer)
+		if err != nil {
+			return err
 		}
 
-		err := s.bgp.AddPeer(context.Background(), &bgpAPI.AddPeerRequest{Peer: n})
+		err = s.bgp.AddPeer(context.Background(), &bgpAPI.AddPeerRequest{Peer: n})
 		if err != nil {
 			return err
 		}
 	}
 
 	// Add the peer to the list.
-	if bgpPeerExists {
-		bgpPeer.count++
-		s.peers[peerName] = bgpPeer
-	} else {
-		s.peers[peerName] = peer{
-			address:  address,
-			iface:    iface,
-			asn:      asn,
-			password: password,
-			holdtime: holdTime,
-			count:    1,
-		}
-	}
+	s.peers[peerName] = newPeer
 
 	return nil
 }
