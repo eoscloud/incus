@@ -3819,6 +3819,30 @@ User keys can be used in search.
 
 ```
 
+```{config:option} bgp.peers.NAME.bfd network_bridge-bgp
+:condition: "BGP server"
+:defaultdesc: "`false`"
+:shortdesc: "Enable BFD for the peer session"
+:type: "bool"
+
+```
+
+```{config:option} bgp.peers.NAME.bfd.interval network_bridge-bgp
+:condition: "BGP server"
+:defaultdesc: "`1000`"
+:shortdesc: "BFD transmit and receive interval (in milliseconds)"
+:type: "integer"
+
+```
+
+```{config:option} bgp.peers.NAME.bfd.multiplier network_bridge-bgp
+:condition: "BGP server"
+:defaultdesc: "`3`"
+:shortdesc: "BFD detection multiplier"
+:type: "integer"
+
+```
+
 ```{config:option} bgp.peers.NAME.holdtime network_bridge-bgp
 :condition: "BGP server"
 :defaultdesc: "`180`"
@@ -4803,6 +4827,30 @@ User keys can be used in search.
 :condition: "BGP server"
 :defaultdesc: "-"
 :shortdesc: "Peer AS number for use by `ovn` downstream networks"
+:type: "integer"
+
+```
+
+```{config:option} bgp.peers.NAME.bfd network_physical-bgp
+:condition: "BGP server"
+:defaultdesc: "`false`"
+:shortdesc: "Enable BFD for the peer session"
+:type: "bool"
+
+```
+
+```{config:option} bgp.peers.NAME.bfd.interval network_physical-bgp
+:condition: "BGP server"
+:defaultdesc: "`1000`"
+:shortdesc: "BFD transmit and receive interval (in milliseconds)"
+:type: "integer"
+
+```
+
+```{config:option} bgp.peers.NAME.bfd.multiplier network_physical-bgp
+:condition: "BGP server"
+:defaultdesc: "`3`"
+:shortdesc: "BFD detection multiplier"
 :type: "integer"
 
 ```

@@ -4239,6 +4239,33 @@
 						}
 					},
 					{
+						"bgp.peers.NAME.bfd": {
+							"condition": "BGP server",
+							"defaultdesc": "`false`",
+							"longdesc": "",
+							"shortdesc": "Enable BFD for the peer session",
+							"type": "bool"
+						}
+					},
+					{
+						"bgp.peers.NAME.bfd.interval": {
+							"condition": "BGP server",
+							"defaultdesc": "`1000`",
+							"longdesc": "",
+							"shortdesc": "BFD transmit and receive interval (in milliseconds)",
+							"type": "integer"
+						}
+					},
+					{
+						"bgp.peers.NAME.bfd.multiplier": {
+							"condition": "BGP server",
+							"defaultdesc": "`3`",
+							"longdesc": "",
+							"shortdesc": "BFD detection multiplier",
+							"type": "integer"
+						}
+					},
+					{
 						"bgp.peers.NAME.holdtime": {
 							"condition": "BGP server",
 							"defaultdesc": "`180`",
@@ -5374,6 +5401,33 @@
 							"defaultdesc": "-",
 							"longdesc": "",
 							"shortdesc": "Peer AS number for use by `ovn` downstream networks",
+							"type": "integer"
+						}
+					},
+					{
+						"bgp.peers.NAME.bfd": {
+							"condition": "BGP server",
+							"defaultdesc": "`false`",
+							"longdesc": "",
+							"shortdesc": "Enable BFD for the peer session",
+							"type": "bool"
+						}
+					},
+					{
+						"bgp.peers.NAME.bfd.interval": {
+							"condition": "BGP server",
+							"defaultdesc": "`1000`",
+							"longdesc": "",
+							"shortdesc": "BFD transmit and receive interval (in milliseconds)",
+							"type": "integer"
+						}
+					},
+					{
+						"bgp.peers.NAME.bfd.multiplier": {
+							"condition": "BGP server",
+							"defaultdesc": "`3`",
+							"longdesc": "",
+							"shortdesc": "BFD detection multiplier",
 							"type": "integer"
 						}
 					},
