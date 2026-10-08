@@ -230,6 +230,30 @@ func (n *physical) Validate(config map[string]string, clientType request.ClientT
 	// defaultdesc: `180`
 	// shortdesc: Peer session hold time (in seconds; optional)
 
+	// gendoc:generate(entity=network_physical, group=bgp, key=bgp.peers.NAME.bfd)
+	//
+	// ---
+	// type: bool
+	// condition: BGP server
+	// defaultdesc: `false`
+	// shortdesc: Enable BFD for the peer session
+
+	// gendoc:generate(entity=network_physical, group=bgp, key=bgp.peers.NAME.bfd.interval)
+	//
+	// ---
+	// type: integer
+	// condition: BGP server
+	// defaultdesc: `1000`
+	// shortdesc: BFD transmit and receive interval (in milliseconds)
+
+	// gendoc:generate(entity=network_physical, group=bgp, key=bgp.peers.NAME.bfd.multiplier)
+	//
+	// ---
+	// type: integer
+	// condition: BGP server
+	// defaultdesc: `3`
+	// shortdesc: BFD detection multiplier
+
 	// Add the BGP validation rules.
 	bgpRules, err := n.bgpValidationRules(config)
 	if err != nil {

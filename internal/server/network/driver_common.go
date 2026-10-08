@@ -612,11 +612,11 @@ func (n *common) bgpValidationRules(config map[string]string) (map[string]func(v
 
 		// Validate remote name in key.
 		fields := strings.Split(k, ".")
-		if len(fields) != 4 {
+		if len(fields) < 4 {
 			return nil, fmt.Errorf("Invalid network configuration key: %q", k)
 		}
 
-		bgpKey := fields[3]
+		bgpKey := strings.Join(fields[3:], ".")
 
 		// Add the correct validation rule for the dynamic field based on last part of key.
 		switch bgpKey {
@@ -628,6 +628,12 @@ func (n *common) bgpValidationRules(config map[string]string) (map[string]func(v
 			rules[k] = validate.Optional(validate.IsAny)
 		case "holdtime":
 			rules[k] = validate.Optional(validate.IsInRange(9, 65535))
+		case "bfd":
+			rules[k] = validate.Optional(validate.IsBool)
+		case "bfd.interval":
+			rules[k] = validate.Optional(validate.IsInRange(10, 60000))
+		case "bfd.multiplier":
+			rules[k] = validate.Optional(validate.IsInRange(1, 255))
 		case "interface":
 			peerName := fields[2]
 			rules[k] = validate.Optional(func(value string) error {
@@ -714,6 +720,7 @@ type bgpPeer struct {
 	asn      uint32
 	password string
 	holdTime uint64
+	bfd      bgp.BFDSettings
 }
 
 // key returns the identifier of the peer (address or interface for unnumbered peers).
@@ -742,6 +749,27 @@ func (n *common) bgpParsePeer(peer string) (bgpPeer, error) {
 		}
 	}
 
+	var bfd bgp.BFDSettings
+	bfd.Enabled = util.IsTrue(fields[5])
+
+	if fields[6] != "" {
+		bfdInterval, err := strconv.ParseUint(fields[6], 10, 32)
+		if err != nil {
+			return bgpPeer{}, err
+		}
+
+		bfd.Interval = uint32(bfdInterval)
+	}
+
+	if fields[7] != "" {
+		bfdMultiplier, err := strconv.ParseUint(fields[7], 10, 32)
+		if err != nil {
+			return bgpPeer{}, err
+		}
+
+		bfd.Multiplier = uint32(bfdMultiplier)
+	}
+
 	return bgpPeer{
 		raw:      peer,
 		address:  net.ParseIP(fields[0]),
@@ -749,6 +777,7 @@ func (n *common) bgpParsePeer(peer string) (bgpPeer, error) {
 		asn:      uint32(asn),
 		password: fields[2],
 		holdTime: holdTime,
+		bfd:      bfd,
 	}, nil
 }
 
@@ -765,6 +794,11 @@ func (n *common) bgpParsePeers(peers []string) ([]bgpPeer, error) {
 	}
 
 	return parsed, nil
+}
+
+// bgpOnlyBFDDiffers returns true if the two peers only differ in their BFD settings.
+func bgpOnlyBFDDiffers(a bgpPeer, b bgpPeer) bool {
+	return a.address.Equal(b.address) && a.iface == b.iface && a.asn == b.asn && a.password == b.password && a.holdTime == b.holdTime
 }
 
 // bgpFindPeer returns the peer with the matching key.
@@ -809,10 +843,26 @@ func (n *common) bgpSetupPeers(oldConfig map[string]string) error {
 		return err
 	}
 
+	// Update the BFD settings in place (done first so that failures happen before any removal).
+	updated := map[string]bool{}
+	for _, peer := range oldPeers {
+		newPeer, found := bgpFindPeer(newPeers, peer.key())
+		if !found || newPeer.raw == peer.raw || !bgpOnlyBFDDiffers(peer, newPeer) {
+			continue
+		}
+
+		err := n.state.BGP.UpdatePeerBFD(newPeer.address, newPeer.iface, newPeer.bfd)
+		if err != nil {
+			return err
+		}
+
+		updated[newPeer.key()] = true
+	}
+
 	// Remove old peers (including those whose settings changed).
 	for _, peer := range oldPeers {
 		newPeer, found := bgpFindPeer(newPeers, peer.key())
-		if found && newPeer.raw == peer.raw {
+		if found && (newPeer.raw == peer.raw || updated[peer.key()]) {
 			continue
 		}
 
@@ -826,12 +876,12 @@ func (n *common) bgpSetupPeers(oldConfig map[string]string) error {
 	// Add new peers.
 	for _, peer := range newPeers {
 		oldPeer, found := bgpFindPeer(oldPeers, peer.key())
-		if found && oldPeer.raw == peer.raw {
+		if found && (oldPeer.raw == peer.raw || updated[peer.key()]) {
 			continue
 		}
 
 		// Add new peer.
-		err := n.state.BGP.AddPeer(peer.address, peer.iface, peer.asn, peer.password, peer.holdTime, bgp.BFDSettings{})
+		err := n.state.BGP.AddPeer(peer.address, peer.iface, peer.asn, peer.password, peer.holdTime, peer.bfd)
 		if err != nil {
 			return err
 		}
@@ -938,9 +988,12 @@ func (n *common) bgpGetPeers(config map[string]string) []string {
 		peerPassword := config[fmt.Sprintf("bgp.peers.%s.password", peerName)]
 		peerHoldTime := config[fmt.Sprintf("bgp.peers.%s.holdtime", peerName)]
 		peerInterface := config[fmt.Sprintf("bgp.peers.%s.interface", peerName)]
+		peerBFD := config[fmt.Sprintf("bgp.peers.%s.bfd", peerName)]
+		peerBFDInterval := config[fmt.Sprintf("bgp.peers.%s.bfd.interval", peerName)]
+		peerBFDMultiplier := config[fmt.Sprintf("bgp.peers.%s.bfd.multiplier", peerName)]
 
 		if (peerAddress != "" || peerInterface != "") && peerASN != "" {
-			peers = append(peers, fmt.Sprintf("%s,%s,%s,%s,%s", peerAddress, peerASN, peerPassword, peerHoldTime, peerInterface))
+			peers = append(peers, fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s", peerAddress, peerASN, peerPassword, peerHoldTime, peerInterface, peerBFD, peerBFDInterval, peerBFDMultiplier))
 		}
 	}
 
