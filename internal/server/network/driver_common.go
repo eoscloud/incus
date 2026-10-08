@@ -706,13 +706,88 @@ func (n *common) bgpClear(config map[string]string) error {
 	return nil
 }
 
+// bgpPeer represents a parsed BGP peer entry.
+type bgpPeer struct {
+	raw      string
+	address  net.IP
+	iface    string
+	asn      uint32
+	password string
+	holdTime uint64
+}
+
+// key returns the identifier of the peer (address or interface for unnumbered peers).
+func (p bgpPeer) key() string {
+	if p.address != nil {
+		return p.address.String()
+	}
+
+	return p.iface
+}
+
+// bgpParsePeer parses a peer string as returned by bgpGetPeers.
+func (n *common) bgpParsePeer(peer string) (bgpPeer, error) {
+	fields := strings.Split(peer, ",")
+
+	asn, err := strconv.ParseUint(fields[1], 10, 32)
+	if err != nil {
+		return bgpPeer{}, err
+	}
+
+	var holdTime uint64
+	if fields[3] != "" {
+		holdTime, err = strconv.ParseUint(fields[3], 10, 32)
+		if err != nil {
+			return bgpPeer{}, err
+		}
+	}
+
+	return bgpPeer{
+		raw:      peer,
+		address:  net.ParseIP(fields[0]),
+		iface:    fields[4],
+		asn:      uint32(asn),
+		password: fields[2],
+		holdTime: holdTime,
+	}, nil
+}
+
+// bgpParsePeers parses a list of peer strings.
+func (n *common) bgpParsePeers(peers []string) ([]bgpPeer, error) {
+	parsed := make([]bgpPeer, 0, len(peers))
+	for _, peer := range peers {
+		p, err := n.bgpParsePeer(peer)
+		if err != nil {
+			return nil, err
+		}
+
+		parsed = append(parsed, p)
+	}
+
+	return parsed, nil
+}
+
+// bgpFindPeer returns the peer with the matching key.
+func bgpFindPeer(peers []bgpPeer, key string) (bgpPeer, bool) {
+	for _, p := range peers {
+		if p.key() == key {
+			return p, true
+		}
+	}
+
+	return bgpPeer{}, false
+}
+
 // bgpClearPeers removes all BGP peers on the network.
 func (n *common) bgpClearPeers(config map[string]string) error {
-	peers := n.bgpGetPeers(config)
+	peers, err := n.bgpParsePeers(n.bgpGetPeers(config))
+	if err != nil {
+		return err
+	}
+
 	for _, peer := range peers {
 		// Remove the peer.
-		fields := strings.Split(peer, ",")
-		err := n.state.BGP.RemovePeer(net.ParseIP(fields[0]), fields[4])
+		err := n.state.BGP.RemovePeer(peer.address, peer.iface)
 		if err != nil && !errors.Is(err, bgp.ErrPeerNotFound) {
 			return err
 		}
@@ -724,18 +799,25 @@ func (n *common) bgpClearPeers(config map[string]string) error {
 // bgpSetupPeers updates the list of BGP peers.
 func (n *common) bgpSetupPeers(oldConfig map[string]string) error {
 	// Setup BGP (and handled config changes).
-	newPeers := n.bgpGetPeers(n.config)
-	oldPeers := n.bgpGetPeers(oldConfig)
+	newPeers, err := n.bgpParsePeers(n.bgpGetPeers(n.config))
+	if err != nil {
+		return err
+	}
 
-	// Remove old peers.
+	oldPeers, err := n.bgpParsePeers(n.bgpGetPeers(oldConfig))
+	if err != nil {
+		return err
+	}
+
+	// Remove old peers (including those whose settings changed).
 	for _, peer := range oldPeers {
-		if slices.Contains(newPeers, peer) {
+		newPeer, found := bgpFindPeer(newPeers, peer.key())
+		if found && newPeer.raw == peer.raw {
 			continue
 		}
 
 		// Remove old peer.
-		fields := strings.Split(peer, ",")
-		err := n.state.BGP.RemovePeer(net.ParseIP(fields[0]), fields[4])
+		err := n.state.BGP.RemovePeer(peer.address, peer.iface)
 		if err != nil {
 			return err
 		}
@@ -743,26 +825,13 @@ func (n *common) bgpSetupPeers(oldConfig map[string]string) error {
 
 	// Add new peers.
 	for _, peer := range newPeers {
-		if slices.Contains(oldPeers, peer) {
+		oldPeer, found := bgpFindPeer(oldPeers, peer.key())
+		if found && oldPeer.raw == peer.raw {
 			continue
 		}
 
 		// Add new peer.
-		fields := strings.Split(peer, ",")
-		asn, err := strconv.ParseUint(fields[1], 10, 32)
-		if err != nil {
-			return err
-		}
-
-		var holdTime uint64
-		if fields[3] != "" {
-			holdTime, err = strconv.ParseUint(fields[3], 10, 32)
-			if err != nil {
-				return err
-			}
-		}
-
-		err = n.state.BGP.AddPeer(net.ParseIP(fields[0]), fields[4], uint32(asn), fields[2], holdTime)
+		err := n.state.BGP.AddPeer(peer.address, peer.iface, peer.asn, peer.password, peer.holdTime)
 		if err != nil {
 			return err
 		}
