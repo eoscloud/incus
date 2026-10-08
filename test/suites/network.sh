@@ -127,6 +127,32 @@ test_network() {
     incus network list-allocations localhost: | grep -e "/1.0/networks/inct$$" -e "/1.0/instances/nettest"
     incus network list-allocations localhost: | grep -e "${v4_addr}" -e "${v6_addr}"
 
+    # Check BGP BFD peer settings.
+    incus network set inct$$ bgp.peers.bfdtest.address=192.0.2.200 bgp.peers.bfdtest.asn=65500
+    incus network set inct$$ bgp.peers.bfdtest.bfd=true bgp.peers.bfdtest.bfd.interval=300 bgp.peers.bfdtest.bfd.multiplier=3
+    incus query /internal/debug/bgp | jq -e '.peers[] | select(.address == "192.0.2.200") | .bfd == true and .bfd_interval == 300 and .bfd_multiplier == 3'
+
+    # Check BFD settings can be changed in place.
+    incus network set inct$$ bgp.peers.bfdtest.bfd.interval=500
+    incus query /internal/debug/bgp | jq -e '.peers[] | select(.address == "192.0.2.200") | .bfd == true and .bfd_interval == 500 and .count == 1'
+    incus network set inct$$ bgp.peers.bfdtest.bfd=false
+    incus query /internal/debug/bgp | jq -e '.peers[] | select(.address == "192.0.2.200") | .bfd == false and .bfd_interval == 500 and .count == 1'
+    incus network set inct$$ bgp.peers.bfdtest.bfd=true bgp.peers.bfdtest.bfd.interval=300
+    incus query /internal/debug/bgp | jq -e '.peers[] | select(.address == "192.0.2.200") | .bfd == true and .bfd_interval == 300 and .count == 1'
+
+    # Check invalid BFD settings are rejected.
+    ! incus network set inct$$ bgp.peers.bfdtest.bfd.multiplier=0 || false
+    ! incus network set inct$$ bgp.peers.bfdtest.bfd.interval=5 || false
+    ! incus network set inct$$ bgp.peers.bfdtest.bfd.bogus=1 || false
+
+    # Check unsetting BFD settings.
+    incus network unset inct$$ bgp.peers.bfdtest.bfd
+    incus network unset inct$$ bgp.peers.bfdtest.bfd.interval
+    incus network unset inct$$ bgp.peers.bfdtest.bfd.multiplier
+    incus query /internal/debug/bgp | jq -e '.peers[] | select(.address == "192.0.2.200") | .bfd == false'
+    incus network unset inct$$ bgp.peers.bfdtest.address
+    incus network unset inct$$ bgp.peers.bfdtest.asn
+
     incus delete nettest -f
     incus network delete inct$$
 }
