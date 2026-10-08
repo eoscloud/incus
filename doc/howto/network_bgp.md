@@ -85,6 +85,9 @@ Set the following configuration options on the uplink network:
 - `bgp.peers.<name>.asn` - the {abbr}`ASN (Autonomous System Number)` for the local server
 - `bgp.peers.<name>.password` - an optional password for the peer session
 - `bgp.peers.<name>.holdtime` - an optional hold time for the peer session (in seconds)
+- `bgp.peers.<name>.bfd` - enable {abbr}`BFD (Bidirectional Forwarding Detection)` for the peer session
+- `bgp.peers.<name>.bfd.interval` - the BFD transmit and receive interval (in milliseconds)
+- `bgp.peers.<name>.bfd.multiplier` - the BFD detection multiplier
 
 ### Use BGP unnumbered
 
@@ -96,3 +99,30 @@ It requires the upstream router to also support BGP unnumbered and to be directl
 
 Once the uplink network is configured, downstream OVN networks will get their external subnets and addresses announced over BGP.
 The next-hop is set to the address of the OVN router on the uplink network.
+
+### Configure BFD
+
+{abbr}`BFD (Bidirectional Forwarding Detection)` lets Incus and its peer detect a link or forwarding failure much faster than the BGP hold time would.
+When the BFD session goes down, the BGP session is reset right away so that routes through the failed peer are withdrawn.
+
+To enable BFD on a peer, set `bgp.peers.<name>.bfd`.
+You can optionally tune the timers with `bgp.peers.<name>.bfd.interval` (in milliseconds, default `1000`) and `bgp.peers.<name>.bfd.multiplier` (default `3`):
+
+```bash
+incus network set incusbr0 bgp.peers.upstream.address=192.0.2.1 bgp.peers.upstream.asn=65537
+incus network set incusbr0 bgp.peers.upstream.bfd=true
+incus network set incusbr0 bgp.peers.upstream.bfd.interval=300 bgp.peers.upstream.bfd.multiplier=3
+```
+
+Enabling BFD doesn't reset the BGP session.
+Changing the BFD timers or disabling BFD while the BFD session is up restarts the BFD session, which can cause the peer to reset the BGP session.
+The BFD settings of a peer that is shared by several uplink networks can't be changed in place and must be identical on all of them.
+
+The interval is used for both the transmit and the receive interval, and a failure is detected after roughly `interval * multiplier` milliseconds without packets (900 ms in the example above).
+
+Keep the following in mind:
+
+- The peer must also have BFD enabled for the session, with compatible timers.
+- Firewalls must allow inbound UDP traffic on port 3784 as well as outbound UDP traffic from source ports 49152 to 65535.
+- Only single-hop BFD is supported, so the peer must be directly connected, even though BGP sessions themselves allow multiple hops.
+- Prefer conservative timers. Very short intervals can cause spurious session resets on a busy or virtualized system.
