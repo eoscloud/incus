@@ -43,12 +43,20 @@ type path struct {
 	nexthop net.IP
 }
 
+// BFDSettings holds the BFD configuration of a peer.
+type BFDSettings struct {
+	Enabled    bool
+	Interval   uint32 // In milliseconds.
+	Multiplier uint32
+}
+
 type peer struct {
 	address  net.IP
 	iface    string
 	asn      uint32
 	password string
 	holdtime uint64
+	bfd      BFDSettings
 	count    int
 }
 
@@ -154,7 +162,7 @@ func (s *Server) start(address string, asn uint32, routerID net.IP) error {
 	// Add existing peers.
 	s.peers = map[string]peer{}
 	for peerName, peer := range oldPeers {
-		err := s.addPeer(peer.address, peer.iface, peer.asn, peer.password, peer.holdtime)
+		err := s.addPeer(peer.address, peer.iface, peer.asn, peer.password, peer.holdtime, peer.bfd)
 		if err != nil {
 			return err
 		}
@@ -523,6 +531,14 @@ func peerConfig(p peer) (*bgpAPI.Peer, error) {
 		}
 	}
 
+	// Always set BFD explicitly (zero values use the GoBGP defaults).
+	n.Bfd = &bgpAPI.BfdPeerConfig{Enabled: p.bfd.Enabled}
+	if p.bfd.Enabled {
+		n.Bfd.DesiredMinimumTxInterval = p.bfd.Interval * 1000
+		n.Bfd.RequiredMinimumReceive = p.bfd.Interval * 1000
+		n.Bfd.DetectionMultiplier = p.bfd.Multiplier
+	}
+
 	// Setup peer for dual-stack.
 	n.AfiSafis = make([]*bgpAPI.AfiSafi, 0)
 	for _, f := range []string{"ipv4-unicast", "ipv6-unicast"} {
@@ -562,15 +578,15 @@ func peerConfig(p peer) (*bgpAPI.Peer, error) {
 }
 
 // AddPeer adds a new BGP peer.
-func (s *Server) AddPeer(address net.IP, iface string, asn uint32, password string, holdTime uint64) error {
+func (s *Server) AddPeer(address net.IP, iface string, asn uint32, password string, holdTime uint64, bfd BFDSettings) error {
 	// Locking.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.addPeer(address, iface, asn, password, holdTime)
+	return s.addPeer(address, iface, asn, password, holdTime, bfd)
 }
 
-func (s *Server) addPeer(address net.IP, iface string, asn uint32, password string, holdTime uint64) error {
+func (s *Server) addPeer(address net.IP, iface string, asn uint32, password string, holdTime uint64, bfd BFDSettings) error {
 	peerName := peerKey(address, iface)
 
 	// Look for an existing peer.
@@ -582,6 +598,10 @@ func (s *Server) addPeer(address net.IP, iface string, asn uint32, password stri
 
 		if bgpPeer.password != password {
 			return fmt.Errorf("Peer %q already used but with a different password", peerName)
+		}
+
+		if bgpPeer.bfd != bfd {
+			return fmt.Errorf("Peer %q already used but with different BFD settings", peerName)
 		}
 
 		// Reuse the existing entry.
@@ -596,6 +616,7 @@ func (s *Server) addPeer(address net.IP, iface string, asn uint32, password stri
 		asn:      asn,
 		password: password,
 		holdtime: holdTime,
+		bfd:      bfd,
 		count:    1,
 	}
 
@@ -614,6 +635,53 @@ func (s *Server) addPeer(address net.IP, iface string, asn uint32, password stri
 
 	// Add the peer to the list.
 	s.peers[peerName] = newPeer
+
+	return nil
+}
+
+// UpdatePeerBFD updates the BFD settings of an existing peer without resetting the session.
+func (s *Server) UpdatePeerBFD(address net.IP, iface string, bfd BFDSettings) error {
+	// Locking.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.updatePeerBFD(address, iface, bfd)
+}
+
+func (s *Server) updatePeerBFD(address net.IP, iface string, bfd BFDSettings) error {
+	peerName := peerKey(address, iface)
+
+	// Find the peer.
+	bgpPeer, bgpPeerExists := s.peers[peerName]
+	if !bgpPeerExists {
+		return ErrPeerNotFound
+	}
+
+	// Nothing to do.
+	if bgpPeer.bfd == bfd {
+		return nil
+	}
+
+	if bgpPeer.count > 1 {
+		return fmt.Errorf("Peer %q is shared with other networks, BFD settings must match", peerName)
+	}
+
+	// Update the live peer (BFD changes don't reset the session).
+	bgpPeer.bfd = bfd
+	if s.bgp != nil {
+		n, err := peerConfig(bgpPeer)
+		if err != nil {
+			return err
+		}
+
+		_, err = s.bgp.UpdatePeer(context.Background(), &bgpAPI.UpdatePeerRequest{Peer: n})
+		if err != nil {
+			return err
+		}
+	}
+
+	// Store the new settings.
+	s.peers[peerName] = bgpPeer
 
 	return nil
 }

@@ -831,7 +831,7 @@ func (n *common) bgpSetupPeers(oldConfig map[string]string) error {
 		}
 
 		// Add new peer.
-		err := n.state.BGP.AddPeer(peer.address, peer.iface, peer.asn, peer.password, peer.holdTime)
+		err := n.state.BGP.AddPeer(peer.address, peer.iface, peer.asn, peer.password, peer.holdTime, bgp.BFDSettings{})
 		if err != nil {
 			return err
 		}

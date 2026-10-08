@@ -30,6 +30,10 @@ type DebugInfoPeer struct {
 	Password  string `json:"password" yaml:"password"`
 	Count     int    `json:"count" yaml:"count"`
 	HoldTime  uint64 `json:"holdtime" yaml:"holdtime"`
+
+	BFD           bool   `json:"bfd" yaml:"bfd"`
+	BFDInterval   uint32 `json:"bfd_interval" yaml:"bfd_interval"`
+	BFDMultiplier uint32 `json:"bfd_multiplier" yaml:"bfd_multiplier"`
 }
 
 // Debug returns a dump of the current configuration.
@@ -63,6 +67,9 @@ func (s *Server) debug() DebugInfo {
 		entry.Password = peer.password
 		entry.Count = peer.count
 		entry.HoldTime = peer.holdtime
+		entry.BFD = peer.bfd.Enabled
+		entry.BFDInterval = peer.bfd.Interval
+		entry.BFDMultiplier = peer.bfd.Multiplier
 
 		debug.Peers = append(debug.Peers, entry)
 	}
